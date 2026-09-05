@@ -1,7 +1,7 @@
 import Foundation
 
-/// User-editable connection settings. Defaults match the controller discovered
-/// during the spike, so a fresh install works with no configuration.
+/// Connection settings. Deliberately empty on a fresh install: baking in one
+/// person's controller address makes the app fail confusingly for everyone else.
 struct Config: Equatable {
     var host: String
     var port: Int
@@ -15,9 +15,12 @@ struct Config: Equatable {
 
     static let keychainService = "unifi-apmenubar"
 
-    /// Captured from https://192.168.0.9:8443 (CN=UniFi, Ubiquiti self-signed).
-    static let knownFingerprint =
-        "c542bc9996d0a3db2b793437d4a7ac166046a9f9e4478abd06b8d3a27fe2dadd"
+    /// Nothing to connect to until both of these are known. The site id and port
+    /// keep useful defaults, since they are the same on nearly every controller.
+    var isConfigured: Bool {
+        !host.trimmingCharacters(in: .whitespaces).isEmpty
+            && !username.trimmingCharacters(in: .whitespaces).isEmpty
+    }
 
     private enum Key {
         static let host = "controllerHost"
@@ -32,11 +35,11 @@ struct Config: Equatable {
         let d = UserDefaults.standard
         let port = d.integer(forKey: Key.port)
         return Config(
-            host: d.string(forKey: Key.host) ?? "192.168.0.9",
+            host: d.string(forKey: Key.host) ?? "",
             port: port == 0 ? 8443 : port,
             site: d.string(forKey: Key.site) ?? "default",
-            username: d.string(forKey: Key.username) ?? "API_access",
-            fingerprint: d.string(forKey: Key.fingerprint) ?? Config.knownFingerprint,
+            username: d.string(forKey: Key.username) ?? "",
+            fingerprint: d.string(forKey: Key.fingerprint) ?? "",
             // bool(forKey:) can't distinguish "absent" from "false", so default to on.
             showMenuBarIcon: d.object(forKey: Key.showIcon) as? Bool ?? true
         )
@@ -52,12 +55,15 @@ struct Config: Equatable {
         d.set(showMenuBarIcon, forKey: Key.showIcon)
     }
 
-    var baseURL: URL? { URL(string: "https://\(host):\(port)") }
+    var baseURL: URL? {
+        guard !host.isEmpty else { return nil }
+        return URL(string: "https://\(host):\(port)")
+    }
 }
 
 enum Keychain {
-    /// Reads the password stored by:
-    ///   security add-generic-password -a <account> -s unifi-apmenubar -w
+    /// Reads the controller password. The app writes this itself from Settings;
+    /// an entry made by the `security` CLI under the same service also works.
     static func password(account: String, service: String = Config.keychainService) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -73,5 +79,43 @@ enum Keychain {
             return nil
         }
         return String(data: data, encoding: .utf8)
+    }
+
+    /// Attribute-only lookup, so checking for a stored password doesn't prompt.
+    static func hasPassword(account: String, service: String = Config.keychainService) -> Bool {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnAttributes as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var item: CFTypeRef?
+        return SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess
+    }
+
+    @discardableResult
+    static func setPassword(
+        _ password: String, account: String, service: String = Config.keychainService
+    ) -> Bool {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+        ]
+        let data = Data(password.utf8)
+
+        let updated = SecItemUpdate(query as CFDictionary,
+                                    [kSecValueData as String: data] as CFDictionary)
+        if updated == errSecSuccess { return true }
+        if updated == errSecItemNotFound {
+            var insert = query
+            insert[kSecValueData as String] = data
+            let added = SecItemAdd(insert as CFDictionary, nil)
+            if added != errSecSuccess { Log.write("keychain add failed, OSStatus \(added)") }
+            return added == errSecSuccess
+        }
+        Log.write("keychain update failed, OSStatus \(updated)")
+        return false
     }
 }

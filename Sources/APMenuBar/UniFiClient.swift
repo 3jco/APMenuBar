@@ -115,9 +115,12 @@ final class UniFiClient {
     private let session: URLSession
     private let delegate: PinnedSessionDelegate
     private var authenticated = false
+    /// Lets Settings try a password that hasn't been saved to the keychain yet.
+    private let passwordOverride: String?
 
-    init(config: Config) {
+    init(config: Config, passwordOverride: String? = nil) {
         self.config = config
+        self.passwordOverride = passwordOverride
         self.delegate = PinnedSessionDelegate(expected: config.fingerprint)
 
         let configuration = URLSessionConfiguration.ephemeral
@@ -160,7 +163,8 @@ final class UniFiClient {
     }
 
     func login() async throws {
-        guard let password = Keychain.password(account: config.username) else {
+        guard let password = passwordOverride
+                ?? Keychain.password(account: config.username) else {
             throw UniFiError.noCredential(account: config.username)
         }
         var request = URLRequest(url: try url("/api/login"))

@@ -12,6 +12,7 @@ final class APMonitor: NSObject, ObservableObject {
         case offWiFi
         case connected(String)
         case unresolved(mac: String)
+        case needsSetup
         case needsCredential(account: String)
         case failure(String)
     }
@@ -59,6 +60,7 @@ final class APMonitor: NSObject, ObservableObject {
         case .offWiFi: return "—"
         case .connected(let name): return name
         case .unresolved: return "?"
+        case .needsSetup: return "Set up"
         case .needsCredential, .failure: return "!"
         }
     }
@@ -80,6 +82,8 @@ final class APMonitor: NSObject, ObservableObject {
             return ssid.map { "on \($0)" } ?? "Connected"
         case .unresolved(let mac):
             return "Controller doesn't know \(mac)"
+        case .needsSetup:
+            return "Add your controller in Settings"
         case .needsCredential(let account):
             return "No keychain password for \(account)"
         case .failure(let message):
@@ -171,6 +175,16 @@ final class APMonitor: NSObject, ObservableObject {
 
     private func tick() async {
         guard !displayAsleep || menuIsOpen else { return }
+
+        // Nothing to contact until someone has told us where the controller is.
+        guard config.isConfigured else {
+            state = .needsSetup
+            if state != loggedState {
+                loggedState = state
+                Log.write("state = \(state)")
+            }
+            return
+        }
 
         let interfaceName = WiFi.interfaceName
         guard WiFi.isRunning(interfaceName) else {

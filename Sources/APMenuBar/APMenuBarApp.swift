@@ -6,23 +6,49 @@ struct APMenuBarApp: App {
     @StateObject private var monitor = APMonitor.shared
 
     init() {
-        Task { @MainActor in APMonitor.shared.start() }
+        Task { @MainActor in
+            APMonitor.shared.start()
+            guard !APMonitor.shared.config.isConfigured else { return }
+            // Nothing works until it's configured, so open Settings unprompted
+            // instead of leaving a stranger staring at "Set up".
+            // Wait for the menu bar label to publish the openSettings action.
+            for _ in 0..<25 {
+                if SettingsWindowPresenter.shared.presentSettings() {
+                    Log.write("first-run: opened settings")
+                    return
+                }
+                try? await Task.sleep(for: .milliseconds(200))
+            }
+            Log.write("first-run: settings action never became available")
+        }
     }
 
     var body: some Scene {
         MenuBarExtra {
             MenuContent(monitor: monitor)
         } label: {
-            HStack(spacing: 4) {
-                if monitor.config.showMenuBarIcon, let icon = MenuBarIcon.image {
-                    Image(nsImage: icon)
-                }
-                Text(monitor.title)
-            }
+            MenuBarLabel(monitor: monitor)
         }
         Settings {
             SettingsView(monitor: monitor)
         }
+    }
+}
+
+/// The menu bar label. Also the earliest live View in the app, so it is where
+/// SwiftUI's openSettings action gets captured for use from non-View code.
+struct MenuBarLabel: View {
+    @ObservedObject var monitor: APMonitor
+    @Environment(\.openSettings) private var openSettings
+
+    var body: some View {
+        HStack(spacing: 4) {
+            if monitor.config.showMenuBarIcon, let icon = MenuBarIcon.image {
+                Image(nsImage: icon)
+            }
+            Text(monitor.title)
+        }
+        .task { SettingsWindowPresenter.shared.openSettingsAction = { openSettings() } }
     }
 }
 
@@ -60,12 +86,27 @@ final class SettingsWindowPresenter {
     static let shared = SettingsWindowPresenter()
     private var closeObservers: [NSObjectProtocol] = []
 
+    /// Captured from a live View. NSApp.sendAction("showSettingsWindow:") reports
+    /// success but creates no window, so this is the only reliable route from
+    /// non-View code such as first-run setup.
+    var openSettingsAction: (() -> Void)?
+
     func present(_ openSettings: () -> Void) {
         show { openSettings() }
     }
 
     /// The standard About panel: name, version, icon and copyright come from
     /// Info.plist, so the credits only carry what those don't say.
+    /// Opens Settings from outside a View, where the SwiftUI action isn't available.
+    /// Opens Settings from outside a View. Returns false if the action isn't
+    /// available yet, so callers can wait rather than silently doing nothing.
+    @discardableResult
+    func presentSettings() -> Bool {
+        guard let openSettingsAction else { return false }
+        show { openSettingsAction() }
+        return true
+    }
+
     func presentAbout() {
         show {
             NSApp.orderFrontStandardAboutPanel(options: [.credits: Self.credits])
@@ -77,11 +118,30 @@ final class SettingsWindowPresenter {
         NSApp.activate(ignoringOtherApps: true)
         open()
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
-            guard let window = NSApp.windows.first(where: { $0.isVisible && $0.canBecomeKey })
-            else { return }
-            window.makeKeyAndOrderFront(nil)
-            self?.watchForClose(of: window)
+        // SwiftUI creates the window asynchronously and the action returns before
+        // it exists, so poll briefly rather than checking once and giving up.
+        focusPresentedWindow(attemptsLeft: 20)
+    }
+
+    private func focusPresentedWindow(attemptsLeft: Int) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            guard let self else { return }
+            // The status item is a visible window too, but can never become key.
+            if let window = NSApp.windows.first(where: { $0.isVisible && $0.canBecomeKey }) {
+                window.makeKeyAndOrderFront(nil)
+                self.watchForClose(of: window)
+                return
+            }
+            if attemptsLeft > 1 {
+                self.focusPresentedWindow(attemptsLeft: attemptsLeft - 1)
+            } else {
+                Log.write("no presentable window appeared; windows = "
+                    + (NSApp.windows.isEmpty ? "<none>" : NSApp.windows.map {
+                        "\($0.title.isEmpty ? "<untitled>" : $0.title)"
+                        + "(\(type(of: $0)) visible=\($0.isVisible) "
+                        + "key=\($0.canBecomeKey))"
+                      }.joined(separator: ", ")))
+            }
         }
     }
 
@@ -193,6 +253,7 @@ struct MenuContent: View {
         case .starting: return "Starting…"
         case .offWiFi: return "Not on Wi-Fi"
         case .unresolved: return "Unknown AP"
+        case .needsSetup: return "Not configured"
         case .needsCredential: return "No password in keychain"
         case .failure: return "Controller unreachable"
         }
@@ -215,6 +276,7 @@ struct SettingsView: View {
     @State private var port = ""
     @State private var site = ""
     @State private var username = ""
+    @State private var password = ""
     @State private var test: TestState = .idle
 
     var body: some View {
@@ -222,7 +284,7 @@ struct SettingsView: View {
             Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 8) {
                 GridRow {
                     Text("Controller")
-                    TextField("192.168.0.9", text: $host)
+                    TextField("unifi.local or 192.168.1.1", text: $host)
                 }
                 GridRow {
                     Text("Port")
@@ -234,7 +296,11 @@ struct SettingsView: View {
                 }
                 GridRow {
                     Text("Username")
-                    TextField("API_access", text: $username)
+                    TextField("read-only admin", text: $username)
+                }
+                GridRow {
+                    Text("Password")
+                    SecureField(passwordPlaceholder, text: $password)
                 }
             }
             .textFieldStyle(.roundedBorder)
@@ -245,8 +311,8 @@ struct SettingsView: View {
                 set: { monitor.setShowMenuBarIcon($0) }
             ))
 
-            Text("Password comes from the login keychain — service "
-                 + "\"\(Config.keychainService)\", account \"\(username)\".")
+            Text("The password is stored in your login keychain, never in the "
+                 + "app's settings. Use a local, read-only admin on the controller.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -298,10 +364,18 @@ struct SettingsView: View {
             switch monitor.state {
             case .connected: return .green
             case .starting: return .yellow
-            case .offWiFi, .unresolved: return .orange
+            case .offWiFi, .unresolved, .needsSetup: return .orange
             case .needsCredential, .failure: return .red
             }
         }
+    }
+
+    private var passwordPlaceholder: String {
+        let account = username.trimmingCharacters(in: .whitespaces)
+        guard !account.isEmpty, Keychain.hasPassword(account: account) else {
+            return "required"
+        }
+        return "stored — type to replace"
     }
 
     private var isTesting: Bool {
@@ -332,9 +406,11 @@ struct SettingsView: View {
     /// Tries the entered settings without saving them or touching the monitor.
     private func runTest() {
         let config = editedConfig
+        let typed = password.isEmpty ? nil : password
         test = .running
         Task { @MainActor in
-            let client = UniFiClient(config: config)
+            // Test what's on screen, including a password not yet saved.
+            let client = UniFiClient(config: config, passwordOverride: typed)
             do {
                 try await client.login()
                 let names = try await client.accessPointNames()
@@ -357,6 +433,10 @@ struct SettingsView: View {
     /// Saves, restarts the monitor with the new settings, and closes the window.
     private func apply() {
         let config = editedConfig
+        if !password.isEmpty {
+            Keychain.setPassword(password, account: config.username)
+            password = ""
+        }
         Log.write("settings applied: \(config.username)@\(config.host):\(config.port) site=\(config.site)")
         monitor.apply(config)
         closeWindow()
