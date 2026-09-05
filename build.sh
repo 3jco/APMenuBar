@@ -27,19 +27,31 @@ if [ -f Resources/AppIcon.icns ]; then
   cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 fi
 
-# Extended attributes (quarantine, provenance, Finder info) travel with copied
-# files and make codesign refuse the bundle outright.
-xattr -cr "$APP"
+# Finder tags an app bundle with com.apple.FinderInfo as soon as it has an
+# icon, and codesign refuses any bundle carrying one. Stripping once loses the
+# race, so strip and sign together, retrying if that specific complaint returns.
+sign_bundle() {
+  local attempt
+  for attempt in 1 2 3; do
+    xattr -cr "$APP" 2>/dev/null || true
+    if codesign --force --sign "$IDENTITY" "$APP" 2>/tmp/apmb-codesign.err; then
+      return 0
+    fi
+    if ! grep -q "detritus" /tmp/apmb-codesign.err; then
+      cat /tmp/apmb-codesign.err >&2
+      return 1
+    fi
+    echo "  codesign lost the xattr race (attempt $attempt), retrying"
+  done
+  cat /tmp/apmb-codesign.err >&2
+  return 1
+}
 
-# Do NOT pipe codesign: the pipeline's exit status hides its failure and the
-# build then reports success while shipping an unsigned app.
-if ! codesign --force --sign "$IDENTITY" "$APP"; then
+if ! sign_bundle; then
   echo "codesign FAILED" >&2
   exit 1
 fi
-# Finder re-applies com.apple.FinderInfo as soon as the bundle has an icon, so
-# strip once more and treat only the real signature check as fatal. --strict
-# additionally rejects that cosmetic xattr, which does not affect launching.
+
 xattr -cr "$APP" 2>/dev/null || true
 if ! codesign --verify "$APP"; then
   echo "signature verification FAILED" >&2
@@ -51,10 +63,6 @@ else
   echo "  signature OK (strict check skipped: Finder icon xattr)"
 fi
 
-# macOS binds Local Network approval to the binary's cdhash, so every rebuild
-# invalidates it — and then denies silently, surfacing as "Internet connection
-# appears to be offline". Clear the stale entry so the grant is re-established.
-tccutil reset All com.3jco.apmenubar >/dev/null 2>&1 || true
 echo "built $APP"
 
 case "${1:-}" in
