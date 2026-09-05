@@ -190,6 +190,13 @@ final class SettingsWindowPresenter {
                 .link: URL(string: "https://3jco.com") as Any,
                 .paragraphStyle: centred,
             ]))
+        credits.append(NSAttributedString(
+            string: "\n\nIcon graphics © 2026 Johanna Frennert",
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 10),
+                .foregroundColor: NSColor.secondaryLabelColor,
+                .paragraphStyle: centred,
+            ]))
         return credits
     }()
 }

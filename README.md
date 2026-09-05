@@ -97,7 +97,12 @@ No Xcode project — `build.sh` assembles and signs the bundle directly.
 ./build.sh run        # ... then launch it from build/
 ./build.sh install    # ... then replace /Applications copy and relaunch
 ./build.sh release    # Developer ID signed, notarized, stapled .dmg
+./build.sh install-release   # install that notarized bundle without rebuilding
 ```
+
+Release artifacts build to `build/release/` so an ordinary `install` cannot
+overwrite them. Use `install-release` rather than `install` to put the notarized
+build into `/Applications`; `install` rebuilds with the development identity.
 
 `release` needs a Developer ID Application certificate and stored notary credentials:
 
@@ -167,3 +172,5 @@ Diagnostics are written to `/tmp/apmenubar.log`, since an agent app has no conso
 ---
 
 © 2026 Three Jay Company AB
+
+Icon graphics © 2026 Johanna Frennert
