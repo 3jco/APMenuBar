@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key><string>APMenuBar</string>
+    <key>CFBundleDisplayName</key><string>AP Menu Bar</string>
+    <key>CFBundleIdentifier</key><string>com.3jco.apmenubar</string>
+    <key>CFBundleExecutable</key><string>APMenuBar</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
+    <key>CFBundleShortVersionString</key><string>1.0</string>
+    <key>CFBundleVersion</key><string>1</string>
+    <key>LSMinimumSystemVersion</key><string>14.0</string>
+    <!-- Required on macOS 15+: talking to the controller on the LAN is gated. -->
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>APMenuBar asks your UniFi controller which access point this Mac is connected to.</string>
+    <!-- Agent app: no Dock icon, no windows, status item only. -->
+    <key>LSUIElement</key><true/>
+</dict>
+</plist>
