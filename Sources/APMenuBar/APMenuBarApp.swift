@@ -5,7 +5,18 @@ import SwiftUI
 struct APMenuBarApp: App {
     @StateObject private var monitor = APMonitor.shared
 
+    /// NSStatusItem persists its position under this key, using the autosave
+    /// name SwiftUI gives a MenuBarExtra.
+    private static let positionKey = "NSStatusItem Preferred Position Item-0"
+
     init() {
+        // Seed a position on first launch so the item lands next to the Wi-Fi
+        // menu rather than at the far left. Dragging it overwrites this key, so
+        // this only ever applies before the user has expressed a preference.
+        if UserDefaults.standard.object(forKey: Self.positionKey) == nil {
+            UserDefaults.standard.set(395, forKey: Self.positionKey)
+        }
+
         Task { @MainActor in
             APMonitor.shared.start()
             guard !APMonitor.shared.config.isConfigured else { return }
