@@ -58,12 +58,24 @@ enum MenuBarIcon {
 @MainActor
 final class SettingsWindowPresenter {
     static let shared = SettingsWindowPresenter()
-    private var closeObserver: NSObjectProtocol?
+    private var closeObservers: [NSObjectProtocol] = []
 
     func present(_ openSettings: () -> Void) {
+        show { openSettings() }
+    }
+
+    /// The standard About panel: name, version, icon and copyright come from
+    /// Info.plist, so the credits only carry what those don't say.
+    func presentAbout() {
+        show {
+            NSApp.orderFrontStandardAboutPanel(options: [.credits: Self.credits])
+        }
+    }
+
+    private func show(_ open: () -> Void) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
-        openSettings()
+        open()
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
             guard let window = NSApp.windows.first(where: { $0.isVisible && $0.canBecomeKey })
@@ -74,13 +86,41 @@ final class SettingsWindowPresenter {
     }
 
     private func watchForClose(of window: NSWindow) {
-        if let closeObserver { NotificationCenter.default.removeObserver(closeObserver) }
-        closeObserver = NotificationCenter.default.addObserver(
+        let observer = NotificationCenter.default.addObserver(
             forName: NSWindow.willCloseNotification, object: window, queue: .main
         ) { _ in
-            Task { @MainActor in NSApp.setActivationPolicy(.accessory) }
+            Task { @MainActor in
+                // Settings and About can be open at once; stay .regular until the
+                // last one closes, or the survivor loses focus.
+                let othersOpen = NSApp.windows.contains {
+                    $0 != window && $0.isVisible && $0.canBecomeKey
+                }
+                if !othersOpen { NSApp.setActivationPolicy(.accessory) }
+            }
         }
+        closeObservers.append(observer)
     }
+
+    private static let credits: NSAttributedString = {
+        let centred = NSMutableParagraphStyle()
+        centred.alignment = .center
+
+        let credits = NSMutableAttributedString(
+            string: "Shows which UniFi access point this Mac is connected to.\n\n",
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 11),
+                .foregroundColor: NSColor.labelColor,
+                .paragraphStyle: centred,
+            ])
+        credits.append(NSAttributedString(
+            string: "3jco.com",
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 11),
+                .link: URL(string: "https://3jco.com") as Any,
+                .paragraphStyle: centred,
+            ]))
+        return credits
+    }()
 }
 
 struct MenuContent: View {
@@ -131,6 +171,9 @@ struct MenuContent: View {
 
         Divider()
 
+        Button("About APMenuBar") {
+            SettingsWindowPresenter.shared.presentAbout()
+        }
         Button("Quit") { NSApplication.shared.terminate(nil) }
             .keyboardShortcut("q")
     }

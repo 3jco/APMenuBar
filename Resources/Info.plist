@@ -11,6 +11,7 @@
     <key>CFBundleShortVersionString</key><string>1.0</string>
     <key>CFBundleVersion</key><string>1</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
+    <key>NSHumanReadableCopyright</key><string>© 2026 Three Jay Company AB</string>
     <!-- Required on macOS 15+: talking to the controller on the LAN is gated. -->
     <key>NSLocalNetworkUsageDescription</key>
     <string>APMenuBar asks your UniFi controller which access point this Mac is connected to.</string>
