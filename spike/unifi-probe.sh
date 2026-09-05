@@ -9,8 +9,8 @@
 # Auth:   $UNIFI_PASS, or keychain -s unifi-apmenubar -a $UNIFI_USER
 set -uo pipefail
 
-HOST="${UNIFI_HOST:-192.168.0.9:8443}"
-USER_NAME="${UNIFI_USER:-API_access}"
+HOST="${UNIFI_HOST:?set UNIFI_HOST, e.g. UNIFI_HOST=10.0.0.2:8443}"
+USER_NAME="${UNIFI_USER:?set UNIFI_USER, e.g. UNIFI_USER=viewer}"
 JAR="$(mktemp -t unifi-cookies)"
 trap 'rm -f "$JAR"' EXIT
 

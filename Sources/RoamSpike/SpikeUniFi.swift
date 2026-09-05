@@ -6,11 +6,14 @@ import Foundation
 import os
 
 enum SpikeUniFi {
-    static let host = "192.168.0.9:8443"
-    static let site = "default"
-    static let username = "API_access"
-    static let fingerprint =
-        "c542bc9996d0a3db2b793437d4a7ac166046a9f9e4478abd06b8d3a27fe2dadd"
+    // Point the spike at your own controller:
+    //   UNIFI_HOST=10.0.0.2:8443 UNIFI_USER=viewer open build/RoamSpike.app
+    private static let env = ProcessInfo.processInfo.environment
+    static let host = env["UNIFI_HOST"] ?? "unifi.local:8443"
+    static let site = env["UNIFI_SITE"] ?? "default"
+    static let username = env["UNIFI_USER"] ?? "admin"
+    /// Empty means trust whatever certificate the controller presents.
+    static let fingerprint = env["UNIFI_FINGERPRINT"] ?? ""
 
     /// Exact BSSID -> AP name, plus a base-MAC prefix fallback for any radio
     /// the controller didn't list.
@@ -36,7 +39,9 @@ enum SpikeUniFi {
             else { return (.cancelAuthenticationChallenge, nil) }
             let der = SecCertificateCopyData(leaf) as Data
             let seen = SHA256.hash(data: der).map { String(format: "%02x", $0) }.joined()
-            guard seen == fingerprint else { return (.cancelAuthenticationChallenge, nil) }
+            guard fingerprint.isEmpty || seen == fingerprint else {
+                return (.cancelAuthenticationChallenge, nil)
+            }
             return (.useCredential, URLCredential(trust: trust))
         }
     }
