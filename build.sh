@@ -4,6 +4,8 @@
 #   ./build.sh run       -> build, then relaunch it
 #   ./build.sh install   -> build, replace /Applications copy, relaunch
 #   ./build.sh release   -> Developer ID signed, notarized, stapled .dmg
+#   ./build.sh install-release
+#                        -> install the already-notarized bundle, no rebuild
 #
 # Release needs a Developer ID Application certificate and stored notary
 # credentials (once):
@@ -15,7 +17,11 @@ cd "$(dirname "$0")"
 
 CONFIG="${CONFIG:-release}"
 APP="build/APMenuBar.app"
-DMG="build/APMenuBar.dmg"
+# Release artifacts live apart from the development bundle: an ordinary
+# ./build.sh install would otherwise rebuild over the notarized app and destroy
+# it, leaving nothing to install-release from.
+RELEASE_APP="build/release/APMenuBar.app"
+DMG="build/release/APMenuBar.dmg"
 NOTARY_PROFILE="${NOTARY_PROFILE:-APMenuBar-notary}"
 MODE="${1:-}"
 
@@ -23,6 +29,35 @@ MODE="${1:-}"
 # monotonic and needs no manual bookkeeping.
 SHORT_VERSION="$(tr -d '[:space:]' < VERSION)"
 BUILD_NUMBER="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
+
+if [ "$MODE" = "install-release" ]; then
+  APP="$RELEASE_APP"
+  if [ ! -d "$APP" ]; then
+    echo "$APP does not exist — run ./build.sh release first" >&2
+    exit 1
+  fi
+  SIGNATURE="$(codesign -dvv "$APP" 2>&1 || true)"
+  case "$SIGNATURE" in
+    *"Authority=Developer ID Application"*) ;;
+    *)
+      echo "$APP is not Developer ID signed — run ./build.sh release first" >&2
+      exit 1
+      ;;
+  esac
+  if ! xcrun stapler validate "$APP" >/dev/null 2>&1; then
+    echo "$APP has no stapled ticket — run ./build.sh release first" >&2
+    exit 1
+  fi
+  pkill -x APMenuBar 2>/dev/null || true
+  rm -rf /Applications/APMenuBar.app
+  cp -R "$APP" /Applications/APMenuBar.app
+  xattr -cr /Applications/APMenuBar.app 2>/dev/null || true
+  # A different signing identity means the old Local Network grant no longer applies.
+  tccutil reset All com.3jco.apmenubar >/dev/null 2>&1 || true
+  open /Applications/APMenuBar.app
+  echo "installed the notarized build to /Applications"
+  exit 0
+fi
 
 # Certificate names are not unique — Xcode happily creates a second cert with
 # an identical name, and codesign then refuses as "ambiguous". Resolve to the
@@ -42,6 +77,7 @@ if [ "$MODE" = "release" ]; then
     exit 1
   fi
   CODESIGN_EXTRA=(--options runtime --timestamp)
+  APP="$RELEASE_APP"
 else
   IDENTITY="${IDENTITY:-$(resolve_identity "Apple Development")}"
   if [ -z "$IDENTITY" ]; then
@@ -132,6 +168,11 @@ case "${1:-}" in
     echo "release ready: $DMG"
     ;;
   install)
+    if xcrun stapler validate /Applications/APMenuBar.app >/dev/null 2>&1; then
+      echo "  note: replacing a NOTARIZED /Applications copy with this"
+      echo "        development build. Use ./build.sh install-release to put"
+      echo "        the notarized one back."
+    fi
     rm -rf /Applications/APMenuBar.app
     cp -R "$APP" /Applications/APMenuBar.app
     # The copy has a new path, so re-clear the stale Local Network grant.
